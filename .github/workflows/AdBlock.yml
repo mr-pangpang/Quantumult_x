@@ -13,10 +13,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: 从指定链接下载AntiAD.list
+      - name: 从指定链接下载AntiAD
         run: |
-          curl -f -o AntiAD.list "https://whatshub.top/rule/AntiAD.list"
-          echo "下载完成，文件大小：$(du -h AntiAD.list)"
+          curl -f -o AntiAD "http://123.56.43.183/adguard/AdBlock"
+          echo "下载完成，文件大小：$(du -h AntiAD)"
 
       - name: 检查dpdisk/quantumult_x仓库是否存在
         id: check_repo
@@ -37,8 +37,8 @@ jobs:
       - name: 移动文件到目标仓库根目录
         run: |
           mkdir -p target-repo/filter
-          mv AntiAD.list target-repo/filter/
-          echo "文件已移动到：target-repo/filter/AntiAD.list"
+          mv AntiAD target-repo/filter/
+          echo "文件已移动到：target-repo/filter/AntiAD"
 
       - name: 提交并推送dpdisk仓库变更
         run: |
