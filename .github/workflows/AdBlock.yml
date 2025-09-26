@@ -15,7 +15,7 @@ jobs:
 
       - name: 从指定链接下载AdBlock
         run: |
-          curl -f -o AdBlock "http://123.56.43.183/adguard/AdBlock"
+          curl -f -o AdBlock "https://whatshub.top/rule/AntiAD.list"
           echo "下载完成，文件大小：$(du -h AdBlock)"
 
       - name: 检查dpdisk/quantumult_x仓库是否存在
