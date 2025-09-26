@@ -13,10 +13,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: 从指定链接下载AdBlock
-        run: |
-          curl -f -o AdBlock "https://whatshub.top/rule/AntiAD.list"
-          echo "下载完成，文件大小：$(du -h AdBlock)"
+- name: 从指定链接下载AdBlock
+  run: |
+    # 添加模拟浏览器的User-Agent，避免被服务器识别为机器人拦截
+    curl -f -o AdBlock "https://whatshub.top/rule/AntiAD.list" -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    echo "下载完成，文件大小：$(du -h AdBlock)"
 
       - name: 检查dpdisk/quantumult_x仓库是否存在
         id: check_repo
