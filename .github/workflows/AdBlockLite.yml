@@ -1,4 +1,4 @@
-name: AdBlock Lite
+name: AdBlockLite
 on:
   schedule:
     - cron: "0 0 * * 1"
@@ -13,10 +13,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: 从指定链接下载AdBlock Lite
+      - name: 从指定链接下载AdBlockLite
         run: |
-          curl -f -o AdBlock Lite "https://whatshub.top/rule/ADLite.list"
-          echo "下载完成，文件大小：$(du -h AdBlock Lite)"
+          curl -f -o AdBlockLite "http://123.56.43.183/adguard/AdBlockLite"
+          echo "下载完成，文件大小：$(du -h AdBlockLite)"
 
       - name: 检查dpdisk/quantumult_x仓库是否存在
         id: check_repo
@@ -37,15 +37,15 @@ jobs:
       - name: 移动文件到目标仓库根目录
         run: |
           mkdir -p target-repo/filter
-          mv AdBlock Lite target-repo/filter/
-          echo "文件已移动到：target-repo/filter/AdBlock Lite"
+          mv AdBlockLite target-repo/filter/
+          echo "文件已移动到：target-repo/filter/AdBlockLite"
 
       - name: 提交并推送dpdisk仓库变更
         run: |
           cd target-repo
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
-          git add filter/AdBlock Lite
+          git add filter/AdBlockLite
           CURRENT_TIME=$(date -d "+8 hours" +'%Y-%m-%d %H:%M:%S')
           git commit -m "updatetime $CURRENT_TIME" || echo "无文件变更，无需提交"
           git push https://${{ secrets.PANGPANG }}@github.com/dpdisk/quantumult_x.git HEAD:main
