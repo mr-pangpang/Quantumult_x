@@ -13,18 +13,18 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: 安装Playwright及Chrome（适配Ubuntu 24.04，修复依赖问题）
+      - name: 安装Playwright及Chrome（适配Ubuntu 24.04）
         run: |
-          # 1. 安装兼容的系统依赖（删除废弃的libgconf-2-4，用libasound2t64替换libasound2）
+          # 安装兼容系统的依赖包（适配最新Ubuntu）
           sudo apt-get update && sudo apt-get install -y python3-pip libnss3 libxi6 libxrender1 libxss1 libasound2t64
-          # 2. 安装Playwright并自动补全所有依赖（--with-deps会处理浏览器所需库）
+          # 安装Playwright并自动补全浏览器及依赖
           pip3 install playwright
           playwright install --with-deps
-          # 3. 搜索Chrome路径（打印结果，方便调试）
+          # 打印Chrome路径（方便调试）
           echo "=== 已找到的浏览器可执行文件 ==="
           find /home/runner/.cache/ms-playwright/ -name "headless_shell" -o -name "chrome" 2>/dev/null
 
-      - name: 用Playwright模拟浏览器下载AdBlock（全局找路径+兼容系统）
+      - name: 用Playwright获取页面内容（替代监听下载，解决超时问题）
         run: |
           cat > download.py << EOF
           from playwright.sync_api import sync_playwright
@@ -32,58 +32,59 @@ jobs:
           import subprocess
 
           def find_chrome_path():
-              # 先找Playwright默认的headless_shell（优先），再找chrome（兼容不同版本）
+              # 搜索Chrome/headless_shell路径（兼容不同版本）
               for target in ["headless_shell", "chrome"]:
                   try:
-                      # 在Playwright缓存目录内搜索目标文件
                       result = subprocess.check_output(
                           ["find", "/home/runner/.cache/ms-playwright/", "-name", target],
                           stderr=subprocess.STDOUT
                       ).decode().strip()
                       if result:
-                          return result.split("\n")[0]  # 返回第一个找到的有效路径
+                          return result.split("\n")[0]
                   except subprocess.CalledProcessError:
-                      continue  # 没找到就试下一个目标
-              # 都没找到则报错
-              raise Exception("未在Playwright缓存目录找到Chrome/headless_shell！")
+                      continue
+              raise Exception("未找到Chrome/headless_shell！")
 
           with sync_playwright() as p:
-              # 1. 找到Chrome实际路径并打印（方便调试）
+              # 1. 找到并启动Chrome
               chrome_path = find_chrome_path()
               print(f"✅ 已找到Chrome路径：{chrome_path}")
-
-              # 2. 启动Chrome（适配服务器环境：无沙箱+内存优化）
               browser = p.chromium.launch(
                   headless=True,
-                  args=["--no-sandbox", "--disable-dev-shm-usage"],  # 解决服务器无权限+内存不足问题
+                  args=["--no-sandbox", "--disable-dev-shm-usage"],  # 适配服务器环境
                   executable_path=chrome_path
               )
 
-              # 3. 新建页面+设置浏览器标识（模拟正常访问）
+              # 2. 新建页面+访问链接（模拟浏览器打开页面）
               page = browser.new_page(
                   user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
               )
+              print("🔄 正在访问链接...")
+              page.goto("https://whatshub.top/rule/AntiAD.list", timeout=30000)  # 30秒超时控制
 
-              # 4. 监听下载+访问链接（加30秒超时，避免卡住）
-              print("🔄 开始访问下载链接...")
-              with page.expect_download(timeout=30000) as download_info:
-                  page.goto("https://whatshub.top/rule/AntiAD.list", timeout=30000)
-              download = download_info.value
-
-              # 5. 保存文件并关闭浏览器
-              download.save_as("AdBlock")
+              # 3. 关键修复：直接获取页面内容（而非等下载事件），保存为AdBlock文件
+              # （和浏览器打开链接后显示文本、手动复制保存的逻辑一致）
+              page_content = page.content()  # 获取页面所有内容（规则文本）
+              with open("AdBlock", "w", encoding="utf-8") as f:
+                  f.write(page_content)
               browser.close()
-              print("🔚 浏览器已关闭，文件开始验证...")
+              print("🔚 浏览器已关闭，开始验证文件...")
 
-              # 6. 验证下载结果（确保文件有效）
+              # 4. 验证文件有效性（确保不是空内容/错误页面）
               if not os.path.exists("AdBlock"):
-                  raise Exception("❌ 下载失败：未找到AdBlock文件")
+                  raise Exception("❌ 失败：未生成AdBlock文件")
               file_size = os.path.getsize("AdBlock")
-              if file_size < 100:  # 排除空文件/极小无效文件（规则文件至少几百字节）
-                  raise Exception(f"❌ 下载失败：文件过小（仅{file_size}字节），可能是错误页面")
-              print(f"✅ 下载成功！文件大小：{file_size} 字节（约 {file_size/1024:.2f} KB）")
+              if file_size < 100:  # 规则文件至少几百字节，排除极小错误页面
+                  raise Exception(f"❌ 失败：文件过小（{file_size}字节），可能是错误页面")
+              # 额外验证：检查内容是否包含规则特征（比如广告拦截规则常见的"||"符号）
+              with open("AdBlock", "r", encoding="utf-8") as f:
+                  content_sample = f.read(100)  # 读前100字符判断
+                  if "||" not in content_sample:  # "||"是广告规则常用前缀（如||example.com^）
+                      raise Exception("❌ 失败：文件内容不是AdBlock规则（未找到规则特征）")
+
+              print(f"✅ 成功！文件大小：{file_size} 字节（约 {file_size/1024:.2f} KB）")
           EOF
-          # 执行下载脚本
+          # 执行脚本
           python3 download.py
 
       - name: 检查dpdisk/quantumult_x仓库是否存在
