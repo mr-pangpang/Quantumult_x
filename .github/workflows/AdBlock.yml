@@ -3,195 +3,52 @@ on:
   schedule:
     - cron: "0 0 * * 1"
   workflow_dispatch:
-    inputs:
-      debug_mode:
-        description: "开启调试模式（打印完整页面内容）"
-        required: false
-        default: "false"
-        type: choice
-        options:
-          - "true"
-          - "false"
 
 jobs:
-  sync-adblock-rule:
+  download-and-save:
     runs-on: ubuntu-latest
-    env:
-      RULE_URL: "https://whatshub.top/rule/AntiAD.list"
-      TARGET_REPO: "dpdisk/quantumult_x"
-      TARGET_PATH: "filter/AdBlock"
-      USER_AGENT: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-    
     steps:
       - name: 拉取当前仓库代码
         uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      - name: 缓存Playwright依赖
-        uses: actions/cache@v3
-        id: playwright-cache
-        with:
-          path: |
-            ~/.cache/ms-playwright/
-            ~/.local/lib/python3.12/site-packages/
-          key: ${{ runner.os }}-playwright-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-playwright-
-
-      - name: 安装Playwright及系统依赖
+      - name: 用wget模拟浏览器下载AdBlock（解决403拦截）
         run: |
-          retry=3
-          while [ $retry -gt 0 ]; do
-            sudo apt-get update && sudo apt-get install -y python3-pip libnss3 libxi6 libxrender1 libxss1 libasound2t64 && break
-            retry=$((retry-1))
-            echo "依赖安装失败，$retry 次重试机会..."
-            sleep 2
-          done
-          if [ $retry -eq 0 ]; then exit 1; fi
+          wget -O AdBlock "https://whatshub.top/rule/AntiAD.list" \
+          --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
+          --header="Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8" \
+          --header="Accept-Language: zh-CN,zh;q=0.8,en-US;q=0.5,en;q=0.3"
+          echo "下载完成，文件大小：$(du -h AdBlock)"
 
-          if [ "${{ steps.playwright-cache.outputs.cache-hit }}" != "true" ]; then
-            pip3 install --upgrade pip
-            pip3 install playwright
-            playwright install --with-deps
-          fi
-
-          echo -e "\n=== 已找到的浏览器可执行文件 ==="
-          find ~/.cache/ms-playwright/ -name "headless_shell" -o -name "chrome" 2>/dev/null || echo "未找到浏览器（缓存异常）"
-
-      - name: 下载AdBlock规则
+      - name: 检查dpdisk/quantumult_x仓库是否存在
+        id: check_repo
         run: |
-          cat > download.py << EOF
-          from playwright.sync_api import sync_playwright
-          import os
-          import subprocess
-          import time
+          RESPONSE=$(curl -s -w "%{http_code}" -H "Authorization: token ${{ secrets.PANGPANG }}" "https://api.github.com/repos/dpdisk/quantumult_x")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          echo "repo_exists=$([ "$HTTP_CODE" -eq 200 ] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
 
-          def find_chrome_path():
-              for target in ["headless_shell", "chrome"]:
-                  try:
-                      result = subprocess.check_output(
-                          ["find", "$HOME/.cache/ms-playwright/", "-name", target],
-                          stderr=subprocess.STDOUT
-                      ).decode("utf-8", errors="ignore").strip()
-                      if result:
-                          return result.split("\n")[0]
-                  except (subprocess.CalledProcessError, FileNotFoundError):
-                      continue
-              raise Exception("❌ 未找到Chrome/headless_shell（浏览器未正确安装）")
-
-          def download_rule(url, user_agent, debug_mode):
-              max_retries = 2
-              retry_count = 0
-
-              while retry_count <= max_retries:
-                  try:
-                      with sync_playwright() as p:
-                          chrome_path = find_chrome_path()
-                          print(f"✅ 找到Chrome路径：{chrome_path}")
-                          
-                          browser = p.chromium.launch(
-                              headless=True,
-                              args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
-                              executable_path=chrome_path,
-                              timeout=20000
-                          )
-
-                          page = browser.new_page(user_agent=user_agent)
-                          page.context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-                          
-                          print(f"🔄 第{retry_count+1}次访问链接：{url}")
-                          page.goto(url, timeout=30000)
-                          time.sleep(1)
-
-                          page_content = page.content()
-                          with open("AdBlock", "wb") as f:
-                              f.write(page_content.encode("utf-8", errors="replace"))
-                          browser.close()
-                          print("🔚 浏览器已关闭，开始验证文件...")
-
-                          file_size = os.path.getsize("AdBlock")
-                          print(f"📊 文件信息：大小={file_size}字节 | 前200字符：{page_content[:200] if len(page_content)>=200 else page_content}")
-                          if debug_mode == "true":
-                              with open("debug_content.txt", "w", encoding="utf-8", errors="ignore") as f:
-                                  f.write(f"=== 调试快照（{time.strftime('%Y-%m-%d %H:%M:%S')}）===\n")
-                                  f.write(f"URL: {url}\nUser-Agent: {user_agent}\nFile Size: {file_size}字节\n")
-                                  f.write(f"Full Content:\n{page_content}")
-                              print("📄 调试快照已保存到 debug_content.txt")
-
-                          if file_size < 100:
-                              raise Exception(f"❌ 文件过小（{file_size}字节），可能是错误页面")
-                          content_sample = page_content[:500].lower()
-                          rule_features = ["#", ".", "^", "||", "!", "/"]
-                          if not any(feature in content_sample for feature in rule_features):
-                              raise Exception(f"❌ 文件无规则特征（前500字符不含{rule_features}），内容可能无效")
-
-                          print(f"✅ 下载成功！文件大小：{file_size}字节（约{file_size/1024:.2f}KB）")
-                          return
-
-                  except Exception as e:
-                      retry_count += 1
-                      print(f"❌ 第{retry_count}次尝试失败：{str(e)[:100]}...")
-                      if retry_count > max_retries:
-                          raise Exception(f"❌ 所有{max_retries+1}次尝试均失败，终止任务") from e
-                      time.sleep(3)
-
-          if __name__ == "__main__":
-              download_rule(
-                  url="${{ env.RULE_URL }}",
-                  user_agent="${{ env.USER_AGENT }}",
-                  debug_mode="${{ github.event.inputs.debug_mode }}"
-              )
-          EOF
-
-          python3 download.py || (echo "❌ 下载脚本执行失败" && exit 1)
-
-      - name: 同步规则到目标仓库
-        env:
-          GITHUB_TOKEN: ${{ secrets.PANGPANG }}
+      - name: 若仓库不存在则创建
+        if: steps.check_repo.outputs.repo_exists == 'false'
         run: |
-          TARGET_REPO_URL="https://${GITHUB_TOKEN}@github.com/${{ env.TARGET_REPO }}.git"
-          LOCAL_TARGET_DIR="target-repo"
+          curl -X POST -H "Authorization: token ${{ secrets.PANGPANG }}" -H "Content-Type: application/json" -d '{"name":"quantumult_x","auto_init":false,"visibility":"public"}' "https://api.github.com/user/repos"
 
-          echo -e "\n🔄 同步到目标仓库：${{ env.TARGET_REPO }}"
-          if ! git clone -b main --single-branch "$TARGET_REPO_URL" "$LOCAL_TARGET_DIR"; then
-              echo "⚠️  仓库未找到，初始化新仓库"
-              mkdir -p "$LOCAL_TARGET_DIR"
-              cd "$LOCAL_TARGET_DIR" || exit 1
-              git init
-              git remote add origin "$TARGET_REPO_URL"
-              git checkout -b main
-              cd ..
-          fi
+      - name: 克隆dpdisk/quantumult_x仓库
+        run: |
+          git clone -b main --single-branch https://${{ secrets.PANGPANG }}@github.com/dpdisk/quantumult_x.git target-repo || (mkdir -p target-repo && cd target-repo && git init && git remote add origin https://${{ secrets.PANGPANG }}@github.com/dpdisk/quantumult_x.git && git checkout -b main)
 
-          mkdir -p "$LOCAL_TARGET_DIR/$(dirname ${{ env.TARGET_PATH }})"
-          mv -f AdBlock "$LOCAL_TARGET_DIR/${{ env.TARGET_PATH }}"
-          echo "✅ 规则文件已移动到：$LOCAL_TARGET_DIR/${{ env.TARGET_PATH }}"
+      - name: 移动文件到目标仓库根目录
+        run: |
+          mkdir -p target-repo/filter
+          mv AdBlock target-repo/filter/
+          echo "文件已移动到：target-repo/filter/AdBlock"
 
-          cd "$LOCAL_TARGET_DIR" || exit 1
-          git config --global user.name "GitHub Actions [AdBlock Sync]"
-          git config --global user.email "actions-adblock-sync@github.com"
-          
-          git add "${{ env.TARGET_PATH }}"
-          if git diff --cached --quiet; then
-              echo "ℹ️  无文件变更，跳过提交"
-              exit 0
-          fi
-
-          COMMIT_TIME=$(date -d "+8 hours" +'%Y-%m-%d %H:%M:%S')
-          git commit -m "Sync AdBlock rule | Update time: $COMMIT_TIME | Source: ${{ env.RULE_URL }}"
-          
-          retry=2
-          while [ $retry -gt 0 ]; do
-              if git push origin main; then
-                  echo "✅ 成功推送到目标仓库：${{ env.TARGET_REPO }}"
-                  break
-              fi
-              retry=$((retry-1))
-              echo "⚠️  推送失败，$retry 次重试机会..."
-              sleep 2
-          done
-          if [ $retry -eq 0 ]; then
-              echo "❌ 推送失败，所有重试机会用尽"
-              exit 1
-          fi
+      - name: 提交并推送dpdisk仓库变更
+        run: |
+          cd target-repo
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          git add filter/AdBlock
+          CURRENT_TIME=$(date -d "+8 hours" +'%Y-%m-%d %H:%M:%S')
+          git commit -m "updatetime $CURRENT_TIME" || echo "无文件变更，无需提交"
+          git push https://${{ secrets.PANGPANG }}@github.com/dpdisk/quantumult_x.git HEAD:main
