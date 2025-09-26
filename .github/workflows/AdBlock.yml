@@ -13,11 +13,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: 从指定链接下载AdBlock
+      - name: 用wget模拟浏览器下载AdBlock（解决403拦截）
         run: |
-          # 添加模拟 Chrome 浏览器的 User-Agent，避免被服务器识别为机器人拦截（修复 403 错误）
-          curl -f -o AdBlock "https://whatshub.top/rule/AntiAD.list" -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-          echo "下载完成，文件大小：$(du -h AdBlock)"  # 打印文件大小，便于确认下载是否成功
+          # 携带浏览器核心请求头（User-Agent/Accept/Accept-Language），模拟正常访问
+          wget -O AdBlock "https://whatshub.top/rule/AntiAD.list" \
+          --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
+          --header="Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8" \
+          --header="Accept-Language: zh-CN,zh;q=0.8,en-US;q=0.5,en;q=0.3"
+          # 打印文件大小，确认下载成功（若失败会直接终止工作流）
+          echo "下载完成，文件大小：$(du -h AdBlock)"
 
       - name: 检查dpdisk/quantumult_x仓库是否存在
         id: check_repo
@@ -47,6 +51,6 @@ jobs:
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
           git add filter/AdBlock
-          CURRENT_TIME=$(date -d "+8 hours" +'%Y-%m-%d %H:%M:%S')  # 使用北京时间作为提交时间
+          CURRENT_TIME=$(date -d "+8 hours" +'%Y-%m-%d %H:%M:%S')  # 用北京时间作为提交时间
           git commit -m "updatetime $CURRENT_TIME" || echo "无文件变更，无需提交"
           git push https://${{ secrets.PANGPANG }}@github.com/dpdisk/quantumult_x.git HEAD:main
