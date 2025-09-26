@@ -1,10 +1,10 @@
-name: AdBlock Rule Sync  # 更清晰的工作流名称，明确用途
+name: AdBlock Rule Sync
 on:
   schedule:
-    - cron: "0 0 * * 1"  # 每周一 UTC 0 点（北京时间 8 点）自动执行
-  workflow_dispatch:  # 支持手动触发（保留便捷调试入口）
+    - cron: "0 0 * * 1"
+  workflow_dispatch:
     inputs:
-      debug_mode:  # 新增调试模式输入，按需开启详细日志
+      debug_mode:
         description: "开启调试模式（打印完整页面内容）"
         required: false
         default: "false"
@@ -14,56 +14,52 @@ on:
           - "false"
 
 jobs:
-  sync-adblock-rule:  # 任务名更语义化，替代原"download-and-save"
+  sync-adblock-rule:
     runs-on: ubuntu-latest
     env:
-      # 环境变量集中管理（后续修改链接/路径只需改这里，不用搜代码）
       RULE_URL: "https://whatshub.top/rule/AntiAD.list"
       TARGET_REPO: "dpdisk/quantumult_x"
-      TARGET_PATH: "filter/AdBlock"  # 目标仓库中文件的最终路径
+      TARGET_PATH: "filter/AdBlock"
       USER_AGENT: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
     
     steps:
-      - name: 拉取当前仓库代码（基础步骤）
+      - name: 拉取当前仓库代码
         uses: actions/checkout@v4
         with:
-          persist-credentials: false  # 保持原安全配置
+          persist-credentials: false
 
-      - name: 缓存Playwright依赖（提速+减少重复安装）
-        uses: actions/cache@v3  # 用官方缓存动作，避免每次重新装浏览器（节省30+秒）
+      - name: 缓存Playwright依赖
+        uses: actions/cache@v3
         id: playwright-cache
         with:
           path: |
-            ~/.cache/ms-playwright/  # Playwright浏览器缓存路径
-            ~/.local/lib/python3.12/site-packages/  # Python依赖缓存路径
-          key: ${{ runner.os }}-playwright-${{ hashFiles('**/requirements.txt') }}  # 按系统+依赖版本缓存
+            ~/.cache/ms-playwright/
+            ~/.local/lib/python3.12/site-packages/
+          key: ${{ runner.os }}-playwright-${{ hashFiles('**/requirements.txt') }}
           restore-keys: |
-            ${{ runner.os }}-playwright-  # 缓存未命中时，复用同系统旧缓存
+            ${{ runner.os }}-playwright-
 
-      - name: 安装Playwright及系统依赖（适配Ubuntu 24.04，失败重试）
+      - name: 安装Playwright及系统依赖
         run: |
-          # 1. 安装系统依赖（增加重试逻辑，应对网络波动）
-          retry=3  # 最多重试3次
+          retry=3
           while [ $retry -gt 0 ]; do
             sudo apt-get update && sudo apt-get install -y python3-pip libnss3 libxi6 libxrender1 libxss1 libasound2t64 && break
             retry=$((retry-1))
             echo "依赖安装失败，$retry 次重试机会..."
-            sleep 2  # 重试间隔2秒，避免频繁请求
+            sleep 2
           done
-          if [ $retry -eq 0 ]; then exit 1; fi  # 3次失败则终止，避免无效循环
+          if [ $retry -eq 0 ]; then exit 1; fi
 
-          # 2. 安装Playwright（仅缓存未命中时执行，节省时间）
           if [ "${{ steps.playwright-cache.outputs.cache-hit }}" != "true" ]; then
-            pip3 install --upgrade pip  # 升级pip，避免版本兼容问题
+            pip3 install --upgrade pip
             pip3 install playwright
-            playwright install --with-deps  # 自动补全浏览器及依赖
+            playwright install --with-deps
           fi
 
-          # 3. 打印浏览器路径（调试用，清晰展示实际使用的Chrome位置）
           echo -e "\n=== 已找到的浏览器可执行文件 ==="
           find ~/.cache/ms-playwright/ -name "headless_shell" -o -name "chrome" 2>/dev/null || echo "未找到浏览器（缓存异常）"
 
-      - name: 下载AdBlock规则（Playwright方案，带重试+详细日志）
+      - name: 下载AdBlock规则
         run: |
           cat > download.py << EOF
           from playwright.sync_api import sync_playwright
@@ -72,87 +68,74 @@ jobs:
           import time
 
           def find_chrome_path():
-              """自动查找Chrome/headless_shell路径（兼容不同Playwright版本）"""
               for target in ["headless_shell", "chrome"]:
                   try:
-                      # 用subprocess执行find命令，捕获输出（忽略无关错误）
                       result = subprocess.check_output(
                           ["find", "$HOME/.cache/ms-playwright/", "-name", target],
                           stderr=subprocess.STDOUT
-                      ).decode("utf-8", errors="ignore").strip()  # 兼容非UTF-8字符
+                      ).decode("utf-8", errors="ignore").strip()
                       if result:
-                          return result.split("\n")[0]  # 返回第一个有效路径
+                          return result.split("\n")[0]
                   except (subprocess.CalledProcessError, FileNotFoundError):
                       continue
               raise Exception("❌ 未找到Chrome/headless_shell（浏览器未正确安装）")
 
           def download_rule(url, user_agent, debug_mode):
-              """下载规则核心逻辑（带重试+调试日志）"""
-              max_retries = 2  # 下载失败重试2次（应对网络波动）
+              max_retries = 2
               retry_count = 0
 
               while retry_count <= max_retries:
                   try:
                       with sync_playwright() as p:
-                          # 1. 启动Chrome（适配服务器无界面环境）
                           chrome_path = find_chrome_path()
                           print(f"✅ 找到Chrome路径：{chrome_path}")
                           
                           browser = p.chromium.launch(
                               headless=True,
-                              args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],  # 加--disable-gpu适配无头环境
+                              args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
                               executable_path=chrome_path,
-                              timeout=20000  # 浏览器启动超时20秒
+                              timeout=20000
                           )
 
-                          # 2. 新建页面+设置请求头（模拟真实浏览器）
                           page = browser.new_page(user_agent=user_agent)
-                          # 禁用JavaScript（可选：减少反爬干扰，规则页面通常无需JS）
                           page.context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
                           
-                          # 3. 访问规则链接（带超时控制）
                           print(f"🔄 第{retry_count+1}次访问链接：{url}")
-                          page.goto(url, timeout=30000)  # 页面加载超时30秒
-                          time.sleep(1)  # 等待1秒，确保内容加载完成（应对动态渲染）
+                          page.goto(url, timeout=30000)
+                          time.sleep(1)
 
-                          # 4. 获取并保存页面内容（用二进制写避免编码错误）
                           page_content = page.content()
-                          with open("AdBlock", "wb") as f:  # 二进制写入，兼容所有字符编码
+                          with open("AdBlock", "wb") as f:
                               f.write(page_content.encode("utf-8", errors="replace"))
                           browser.close()
                           print("🔚 浏览器已关闭，开始验证文件...")
 
-                          # 5. 调试日志：打印关键信息（按需开启）
                           file_size = os.path.getsize("AdBlock")
                           print(f"📊 文件信息：大小={file_size}字节 | 前200字符：{page_content[:200] if len(page_content)>=200 else page_content}")
                           if debug_mode == "true":
-                              # 调试模式：保存完整内容快照（方便定位问题）
                               with open("debug_content.txt", "w", encoding="utf-8", errors="ignore") as f:
                                   f.write(f"=== 调试快照（{time.strftime('%Y-%m-%d %H:%M:%S')}）===\n")
                                   f.write(f"URL: {url}\nUser-Agent: {user_agent}\nFile Size: {file_size}字节\n")
                                   f.write(f"Full Content:\n{page_content}")
                               print("📄 调试快照已保存到 debug_content.txt")
 
-                          # 6. 宽松且严谨的文件校验（避免无效内容）
                           if file_size < 100:
                               raise Exception(f"❌ 文件过小（{file_size}字节），可能是错误页面")
-                          # 校验规则特征（覆盖99% AdBlock规则格式）
-                          content_sample = page_content[:500].lower()  # 转小写，避免大小写问题
-                          rule_features = ["#", ".", "^", "||", "!", "/"]  # 扩展特征：注释、域名、规则符、感叹号（规则描述）、路径符
+                          content_sample = page_content[:500].lower()
+                          rule_features = ["#", ".", "^", "||", "!", "/"]
                           if not any(feature in content_sample for feature in rule_features):
                               raise Exception(f"❌ 文件无规则特征（前500字符不含{rule_features}），内容可能无效")
 
                           print(f"✅ 下载成功！文件大小：{file_size}字节（约{file_size/1024:.2f}KB）")
-                          return  # 成功则退出重试循环
+                          return
 
                   except Exception as e:
                       retry_count += 1
-                      print(f"❌ 第{retry_count}次尝试失败：{str(e)[:100]}...")  # 打印错误前100字符（避免日志过长）
+                      print(f"❌ 第{retry_count}次尝试失败：{str(e)[:100]}...")
                       if retry_count > max_retries:
                           raise Exception(f"❌ 所有{max_retries+1}次尝试均失败，终止任务") from e
-                      time.sleep(3)  # 重试间隔3秒，减少服务器压力
+                      time.sleep(3)
 
-          # 主执行逻辑（读取环境变量+调试模式）
           if __name__ == "__main__":
               download_rule(
                   url="${{ env.RULE_URL }}",
@@ -161,19 +144,15 @@ jobs:
               )
           EOF
 
-          # 执行下载脚本（捕获异常，确保错误日志清晰）
           python3 download.py || (echo "❌ 下载脚本执行失败" && exit 1)
 
-      - name: 同步规则到目标仓库（安全+容错）
+      - name: 同步规则到目标仓库
         env:
-          # 用环境变量隐藏密钥引用（避免明文暴露，符合安全最佳实践）
           GITHUB_TOKEN: ${{ secrets.PANGPANG }}
         run: |
-          # 1. 定义目标仓库地址（用密钥拼接，避免明文URL）
           TARGET_REPO_URL="https://${GITHUB_TOKEN}@github.com/${{ env.TARGET_REPO }}.git"
-          LOCAL_TARGET_DIR="target-repo"  # 本地临时目录（统一管理）
+          LOCAL_TARGET_DIR="target-repo"
 
-          # 2. 克隆目标仓库（容错：仓库不存在则初始化）
           echo -e "\n🔄 同步到目标仓库：${{ env.TARGET_REPO }}"
           if ! git clone -b main --single-branch "$TARGET_REPO_URL" "$LOCAL_TARGET_DIR"; then
               echo "⚠️  仓库未找到，初始化新仓库"
@@ -185,27 +164,23 @@ jobs:
               cd ..
           fi
 
-          # 3. 移动规则文件（确保目标目录存在）
-          mkdir -p "$LOCAL_TARGET_DIR/$(dirname ${{ env.TARGET_PATH }})"  # 自动创建父目录（避免路径不存在错误）
-          mv -f AdBlock "$LOCAL_TARGET_DIR/${{ env.TARGET_PATH }}"  # -f 覆盖旧文件（避免权限问题）
+          mkdir -p "$LOCAL_TARGET_DIR/$(dirname ${{ env.TARGET_PATH }})"
+          mv -f AdBlock "$LOCAL_TARGET_DIR/${{ env.TARGET_PATH }}"
           echo "✅ 规则文件已移动到：$LOCAL_TARGET_DIR/${{ env.TARGET_PATH }}"
 
-          # 4. 提交并推送变更（容错：无变更则跳过）
           cd "$LOCAL_TARGET_DIR" || exit 1
-          git config --global user.name "GitHub Actions [AdBlock Sync]"  # 明确提交者身份
+          git config --global user.name "GitHub Actions [AdBlock Sync]"
           git config --global user.email "actions-adblock-sync@github.com"
           
           git add "${{ env.TARGET_PATH }}"
-          if git diff --cached --quiet; then  # 检查是否有实际变更
+          if git diff --cached --quiet; then
               echo "ℹ️  无文件变更，跳过提交"
               exit 0
           fi
 
-          # 提交信息带时间（北京时间）+ 版本提示
-          COMMIT_TIME=$(date -d "+8 hours" +'%Y-%m-%d %H:%M:%S')  # 转换为北京时间
+          COMMIT_TIME=$(date -d "+8 hours" +'%Y-%m-%d %H:%M:%S')
           git commit -m "Sync AdBlock rule | Update time: $COMMIT_TIME | Source: ${{ env.RULE_URL }}"
           
-          # 推送（带重试，应对网络波动）
           retry=2
           while [ $retry -gt 0 ]; do
               if git push origin main; then
