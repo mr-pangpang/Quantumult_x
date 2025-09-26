@@ -13,15 +13,46 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: 用wget模拟浏览器下载AdBlock（解决403拦截）
+      - name: 安装Playwright及无头Chrome（模拟浏览器依赖）
         run: |
-          # 携带浏览器核心请求头（User-Agent/Accept/Accept-Language），模拟正常访问
-          wget -O AdBlock "https://whatshub.top/rule/AntiAD.list" \
-          --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
-          --header="Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8" \
-          --header="Accept-Language: zh-CN,zh;q=0.8,en-US;q=0.5,en;q=0.3"
-          # 打印文件大小，确认下载成功（若失败会直接终止工作流）
-          echo "下载完成，文件大小：$(du -h AdBlock)"
+          # 更新系统依赖 + 安装Python环境（Playwright基于Python）
+          sudo apt-get update && sudo apt-get install -y python3-pip
+          # 安装Playwright库 + 下载无头Chrome（无需界面，适配服务器环境）
+          pip3 install playwright
+          playwright install chrome
+
+      - name: 用Playwright模拟浏览器下载AdBlock（绕过严格拦截）
+        run: |
+          # 编写Python脚本：启动无头Chrome → 打开链接 → 监听下载 → 保存文件
+          cat > download.py << EOF
+          from playwright.sync_api import sync_playwright
+          import os
+
+          with sync_playwright() as p:
+              # 启动无头Chrome，添加--no-sandbox适配服务器环境
+              browser = p.chromium.launch(
+                  headless=True,
+                  args=["--no-sandbox"],
+                  user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+              )
+              page = browser.new_page()
+              # 监听文件下载事件，等待下载完成
+              with page.expect_download() as download_info:
+                  page.goto("https://whatshub.top/rule/AntiAD.list")  # 打开下载链接
+              download = download_info.value
+              download.save_as("AdBlock")  # 保存文件到当前目录（命名为AdBlock）
+              browser.close()
+
+              # 验证下载结果（若文件不存在，直接报错终止工作流）
+              if not os.path.exists("AdBlock"):
+                  raise Exception("文件下载失败！未找到AdBlock文件")
+              file_size = os.path.getsize("AdBlock")
+              if file_size == 0:
+                  raise Exception(f"下载的文件为空！文件大小：{file_size} 字节")
+              print(f"下载成功！文件大小：{file_size} 字节（约 {file_size/1024:.2f} KB）")
+          EOF
+          # 执行下载脚本
+          python3 download.py
 
       - name: 检查dpdisk/quantumult_x仓库是否存在
         id: check_repo
