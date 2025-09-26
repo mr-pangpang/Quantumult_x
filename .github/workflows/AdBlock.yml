@@ -13,10 +13,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: 从指定链接下载AdBlock
+      - name: 从指定链接下载AntiAD.list
         run: |
-          curl -f -o AdBlock "https://whatshub.top/rule/AntiAD.list"
-          echo "下载完成，文件大小：$(du -h AdBlock)"
+          curl -f -o AntiAD.list "https://yfamily.vercel.app/rule/AntiAD.list"
+          echo "下载完成，文件大小：$(du -h AntiAD.list)"
 
       - name: 检查dpdisk/quantumult_x仓库是否存在
         id: check_repo
@@ -37,8 +37,8 @@ jobs:
       - name: 移动文件到目标仓库根目录
         run: |
           mkdir -p target-repo/filter
-          mv AdBlock target-repo/filter/
-          echo "文件已移动到：target-repo/filter/AdBlock"
+          mv AntiAD.list target-repo/filter/
+          echo "文件已移动到：target-repo/filter/AntiAD.list"
 
       - name: 提交并推送dpdisk仓库变更
         run: |
