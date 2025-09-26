@@ -13,40 +13,47 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: 安装Playwright及无头Chrome（模拟浏览器依赖）
+      - name: 安装Playwright及Chrome（指定路径，解决找不到浏览器问题）
         run: |
-          # 更新系统依赖 + 安装Python环境（Playwright基于Python）
+          # 1. 更新系统依赖 + 安装Python环境
           sudo apt-get update && sudo apt-get install -y python3-pip
-          # 安装Playwright库 + 下载无头Chrome（无需界面，适配服务器环境）
+          # 2. 安装Playwright（不单独指定chrome，用默认命令安装所有浏览器，确保路径完整）
           pip3 install playwright
-          playwright install chrome
+          playwright install  # 关键：用默认安装命令，而非"playwright install chrome"，避免路径缺失
+          # 3. 打印Chrome安装路径（方便调试，确认文件存在）
+          echo "Chrome可执行文件路径：$(find /home/runner/.cache/ms-playwright/ -name headless_shell)"
 
-      - name: 用Playwright模拟浏览器下载AdBlock（绕过严格拦截）
+      - name: 用Playwright模拟浏览器下载AdBlock（指定Chrome路径，确保能启动）
         run: |
-          # 编写Python脚本：启动无头Chrome → 打开链接 → 监听下载 → 保存文件
-          # 修复点：将user_agent从launch()移到new_page()中
           cat > download.py << EOF
           from playwright.sync_api import sync_playwright
           import os
+          import glob
 
           with sync_playwright() as p:
-              # 启动无头Chrome，添加--no-sandbox适配服务器环境（此处不含user_agent）
+              # 关键修复：自动找到Chrome可执行文件路径（适配GitHub Actions环境）
+              chrome_path = glob.glob("/home/runner/.cache/ms-playwright/chromium-*/chrome-linux/headless_shell")[0]
+              
+              # 启动Chrome时，明确指定可执行文件路径
               browser = p.chromium.launch(
                   headless=True,
-                  args=["--no-sandbox"]  # 仅保留启动参数，移除错误的user_agent
+                  args=["--no-sandbox"],  # 适配服务器无界面环境
+                  executable_path=chrome_path  # 手动指定Chrome路径，解决"找不到文件"错误
               )
-              # 关键修复：user_agent放在new_page()里，这是Playwright的正确参数位置
+              
+              # 新建页面并设置User-Agent
               page = browser.new_page(
                   user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
               )
-              # 监听文件下载事件，等待下载完成
+              
+              # 监听下载并打开链接
               with page.expect_download() as download_info:
-                  page.goto("https://whatshub.top/rule/AntiAD.list")  # 打开下载链接
+                  page.goto("https://whatshub.top/rule/AntiAD.list")
               download = download_info.value
-              download.save_as("AdBlock")  # 保存文件到当前目录（命名为AdBlock）
+              download.save_as("AdBlock")  # 保存文件
               browser.close()
 
-              # 验证下载结果（若文件不存在，直接报错终止工作流）
+              # 验证下载结果
               if not os.path.exists("AdBlock"):
                   raise Exception("文件下载失败！未找到AdBlock文件")
               file_size = os.path.getsize("AdBlock")
