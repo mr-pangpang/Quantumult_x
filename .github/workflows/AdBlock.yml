@@ -15,7 +15,7 @@ jobs:
 
       - name: 从指定链接下载AntiAD.list
         run: |
-          curl -f -o AntiAD.list "https://yfamily.vercel.app/rule/AntiAD.list"
+          curl -f -o AntiAD.list "https://whatshub.top/rule/AntiAD.list"
           echo "下载完成，文件大小：$(du -h AntiAD.list)"
 
       - name: 检查dpdisk/quantumult_x仓库是否存在
