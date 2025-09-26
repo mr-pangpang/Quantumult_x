@@ -15,8 +15,8 @@ jobs:
 
       - name: 从指定链接下载AdBlockLite
         run: |
-          curl -f -o AdBlockLite "https://yfamily.vercel.app/rule/ADLite.list"
-          echo "下载完成，文件大小：$(du -h AdBlockLite)"
+          curl -f -o ADLite.list "https://yfamily.vercel.app/rule/ADLite.list"
+          echo "下载完成，文件大小：$(du -h ADLite.list)"
 
       - name: 检查dpdisk/quantumult_x仓库是否存在
         id: check_repo
