@@ -13,47 +13,73 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: 安装Playwright及Chrome（指定路径，解决找不到浏览器问题）
+      - name: 安装Playwright及Chrome（确保完整安装）
         run: |
-          # 1. 更新系统依赖 + 安装Python环境
-          sudo apt-get update && sudo apt-get install -y python3-pip
-          # 2. 安装Playwright（不单独指定chrome，用默认命令安装所有浏览器，确保路径完整）
+          # 1. 安装依赖（解决Chrome启动依赖缺失问题）
+          sudo apt-get update && sudo apt-get install -y python3-pip libnss3 libgconf-2-4 libxi6 libxrender1 libxss1 libasound2
+          # 2. 安装Playwright并下载浏览器（用--with-deps自动补全系统依赖）
           pip3 install playwright
-          playwright install  # 关键：用默认安装命令，而非"playwright install chrome"，避免路径缺失
-          # 3. 打印Chrome安装路径（方便调试，确认文件存在）
-          echo "Chrome可执行文件路径：$(find /home/runner/.cache/ms-playwright/ -name headless_shell)"
+          playwright install --with-deps  # 关键：加--with-deps，确保Chrome启动所需的系统库都装全
+          # 3. 全局搜索Chrome可执行文件（打印路径，方便调试）
+          echo "正在搜索Chrome路径..."
+          find / -name "headless_shell" 2>/dev/null || echo "未找到headless_shell，找chrome..."
+          find / -name "chrome" 2>/dev/null 2>/dev/null
 
-      - name: 用Playwright模拟浏览器下载AdBlock（指定Chrome路径，确保能启动）
+      - name: 用Playwright模拟浏览器下载AdBlock（全局找Chrome路径，确保能找到）
         run: |
           cat > download.py << EOF
           from playwright.sync_api import sync_playwright
           import os
-          import glob
+          import subprocess
+
+          def find_chrome_path():
+              # 方案1：先找Playwright默认安装的headless_shell（优先）
+              try:
+                  result = subprocess.check_output(
+                      ["find", "/home/runner/.cache/ms-playwright/", "-name", "headless_shell"], 
+                      stderr=subprocess.STDOUT
+                  ).decode().strip()
+                  if result:
+                      return result.split("\n")[0]  # 返回第一个找到的路径
+              except:
+                  pass
+              
+              # 方案2：找不到headless_shell，找chrome可执行文件（兼容不同版本）
+              try:
+                  result = subprocess.check_output(
+                      ["find", "/home/runner/.cache/ms-playwright/", "-name", "chrome"], 
+                      stderr=subprocess.STDOUT
+                  ).decode().strip()
+                  if result:
+                      return result.split("\n")[0]
+              except:
+                  raise Exception("未找到Chrome浏览器可执行文件！")
 
           with sync_playwright() as p:
-              # 关键修复：自动找到Chrome可执行文件路径（适配GitHub Actions环境）
-              chrome_path = glob.glob("/home/runner/.cache/ms-playwright/chromium-*/chrome-linux/headless_shell")[0]
-              
-              # 启动Chrome时，明确指定可执行文件路径
+              # 1. 调用函数找到Chrome实际路径
+              chrome_path = find_chrome_path()
+              print(f"找到Chrome路径：{chrome_path}")
+
+              # 2. 启动Chrome（指定路径+兼容参数）
               browser = p.chromium.launch(
                   headless=True,
-                  args=["--no-sandbox"],  # 适配服务器无界面环境
-                  executable_path=chrome_path  # 手动指定Chrome路径，解决"找不到文件"错误
+                  args=["--no-sandbox", "--disable-dev-shm-usage"],  # 加--disable-dev-shm-usage解决服务器内存限制
+                  executable_path=chrome_path
               )
-              
-              # 新建页面并设置User-Agent
+
+              # 3. 新建页面+设置User-Agent
               page = browser.new_page(
                   user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
               )
-              
-              # 监听下载并打开链接
-              with page.expect_download() as download_info:
-                  page.goto("https://whatshub.top/rule/AntiAD.list")
+
+              # 4. 监听下载+打开链接（加超时控制，避免卡住）
+              with page.expect_download(timeout=30000) as download_info:  # 30秒超时，防止无限等待
+                  page.goto("https://whatshub.top/rule/AntiAD.list", timeout=30000)
               download = download_info.value
-              download.save_as("AdBlock")  # 保存文件
+              download.save_as("AdBlock")
               browser.close()
 
-              # 验证下载结果
+              # 5. 验证下载结果
               if not os.path.exists("AdBlock"):
                   raise Exception("文件下载失败！未找到AdBlock文件")
               file_size = os.path.getsize("AdBlock")
