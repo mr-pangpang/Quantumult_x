@@ -24,18 +24,21 @@ jobs:
       - name: 用Playwright模拟浏览器下载AdBlock（绕过严格拦截）
         run: |
           # 编写Python脚本：启动无头Chrome → 打开链接 → 监听下载 → 保存文件
+          # 修复点：将user_agent从launch()移到new_page()中
           cat > download.py << EOF
           from playwright.sync_api import sync_playwright
           import os
 
           with sync_playwright() as p:
-              # 启动无头Chrome，添加--no-sandbox适配服务器环境
+              # 启动无头Chrome，添加--no-sandbox适配服务器环境（此处不含user_agent）
               browser = p.chromium.launch(
                   headless=True,
-                  args=["--no-sandbox"],
+                  args=["--no-sandbox"]  # 仅保留启动参数，移除错误的user_agent
+              )
+              # 关键修复：user_agent放在new_page()里，这是Playwright的正确参数位置
+              page = browser.new_page(
                   user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
               )
-              page = browser.new_page()
               # 监听文件下载事件，等待下载完成
               with page.expect_download() as download_info:
                   page.goto("https://whatshub.top/rule/AntiAD.list")  # 打开下载链接
