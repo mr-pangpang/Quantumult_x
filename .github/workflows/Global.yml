@@ -1,7 +1,7 @@
 name: 国外代理
 on:
   schedule:
-    - cron: "0 0 * * 1"
+    - cron: "0 0 * * *"
   workflow_dispatch:
 
 jobs:
